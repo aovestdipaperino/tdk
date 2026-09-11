@@ -31,7 +31,7 @@ cargo install turbo-debug-console
 Run it:
 
 ```sh
-turbo-debug-console
+tdc
 ```
 
 It listens on **port 7878**. Then stream something at it:

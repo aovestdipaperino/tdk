@@ -94,15 +94,15 @@ fn handle_cli_flags() {
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-V" | "--version" => {
-                println!("turbo-debug-console {}", env!("CARGO_PKG_VERSION"));
+                println!("tdc {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "-h" | "--help" => {
                 println!(
-                    "turbo-debug-console {}\n\
+                    "tdc {}\n\
                      {}\n\
                      \n\
-                     USAGE:\n    turbo-debug-console\n\
+                     USAGE:\n    tdc\n\
                      \n\
                      Takes no options: it listens on the fixed control port {CONTROL_PORT}.\n\
                      \n\
@@ -146,6 +146,17 @@ fn set_terminal_title(title: &str) {
 fn main() -> turbo_vision::core::error::Result<()> {
     handle_cli_flags();
 
+    // Best-effort liveness marker: hold an exclusive advisory lock on a
+    // well-known temp file for the life of the process, so
+    // `turbo_debug_console::is_running` can answer "is a console up?" with two
+    // syscalls and no network call. The kernel releases the lock the instant
+    // the process exits or crashes, so there is no stale state to clean up.
+    // The control-port bind below remains the authoritative single-instance
+    // check; if the lock cannot be acquired (another console holds it, or the
+    // temp dir is unusable) we simply proceed and let the bind fail with its
+    // usual message.
+    let _liveness_lock = turbo_debug_console::liveness::acquire();
+
     set_terminal_title("Turbo Debug Console");
 
     let mut app = Application::new()?;
@@ -159,7 +170,7 @@ fn main() -> turbo_vision::core::error::Result<()> {
             // The terminal is already in raw mode; drop out of it before
             // printing, or the message lands in a half-torn-down screen.
             drop(app);
-            eprintln!("turbo-debug-console: cannot bind 127.0.0.1:{CONTROL_PORT}: {e}");
+            eprintln!("tdc: cannot bind 127.0.0.1:{CONTROL_PORT}: {e}");
             std::process::exit(1);
         }
     };

@@ -1078,6 +1078,7 @@ dependencies = [
 name = "turbo-debug-console"
 version = "0.5.2"
 dependencies = [
+ "libc",
  "serde_json",
  "trace-stream",
  "turbo-vision",

@@ -6,6 +6,7 @@
 
 pub mod ansiasm;
 pub mod cmd;
+pub mod liveness;
 pub mod pipeline;
 pub mod proto;
 pub mod registry;
