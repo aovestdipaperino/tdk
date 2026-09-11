@@ -22,6 +22,11 @@ use crate::streamview::StreamView;
 /// The authoritative tool-name table, verbatim from `dispatch` in plank's
 /// `src/tools/mod.rs`, so DSML tool-call banners match what plank itself
 /// would render.
+///
+/// `dispatch` ends with a prefix arm no static table can mirror -- every
+/// `mcp__server__tool` name routes to the MCP bridge, and those names are
+/// discovered per server at runtime. `trace-stream` applies that prefix rule
+/// itself, so it does not belong here.
 fn tool_names() -> Vec<String> {
     [
         "EnterWorktree",

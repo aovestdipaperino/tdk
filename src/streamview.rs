@@ -198,38 +198,94 @@ fn wrap_cells(cells: &[Cell], width: usize) -> Vec<Vec<Cell>> {
         return vec![cells.to_vec()];
     }
 
+    let hang = hanging_indent(cells, width);
     let mut rows = Vec::new();
     let mut rest = cells;
-    while rest.len() > width {
+    let mut first = true;
+    while rest.len() + if first { 0 } else { hang.len() } > width {
+        let avail = width - if first { 0 } else { hang.len() };
         // Search for a break point: the last whitespace cell whose index is
         // < width, scanning backwards from width - 1. A filler cell ('\0')
         // is skipped as a candidate break (it is never whitespace) but does
         // not stop the scan.
         let mut break_at = None;
-        for i in (0..width).rev() {
+        for i in (0..avail).rev() {
             if rest[i].ch.is_whitespace() {
                 break_at = Some(i);
                 break;
             }
         }
         if let Some(i) = break_at {
-            rows.push(rest[..i].to_vec());
+            rows.push(with_hang(&hang, first, &rest[..i]));
             rest = &rest[i + 1..]; // drop the whitespace cell itself
         } else {
             // A plain character-break cut at `width` could land between a
             // double-width character's leading cell and its filler ('\0');
             // if so, pull the cut back one column so the whole glyph moves
             // to the next row instead of splitting it.
-            let mut cut = width;
+            let mut cut = avail;
             if cut > 1 && rest.get(cut).is_some_and(|c| c.ch == '\0') {
                 cut -= 1;
             }
-            rows.push(rest[..cut].to_vec());
+            rows.push(with_hang(&hang, first, &rest[..cut]));
             rest = &rest[cut..];
         }
+        first = false;
     }
-    rows.push(rest.to_vec());
+    rows.push(with_hang(&hang, first, rest));
     rows
+}
+
+/// Prepends the hanging indent to a continuation row; the first row of a
+/// logical line already carries its own prefix.
+fn with_hang(hang: &[Cell], first: bool, row: &[Cell]) -> Vec<Cell> {
+    if first || hang.is_empty() {
+        return row.to_vec();
+    }
+    let mut out = hang.to_vec();
+    out.extend_from_slice(row);
+    out
+}
+
+/// The prefix continuation rows of `cells` are indented by, so a wrapped tool
+/// banner keeps its shape instead of falling back to column 0.
+///
+/// A tool-call banner line is `"  ├─ name ─ value"`. When the value is long
+/// enough to wrap, the rest of it landing flush left breaks the tree: the
+/// reader cannot tell a continuation from a new branch. The continuation gets
+/// the same column count as the branch prefix, with the branch glyph replaced
+/// by the vertical rail `│` — matching the rail `trace-stream` already emits
+/// for a value that arrives with real newlines in it, so a wrapped value and a
+/// multi-line one look the same.
+///
+/// Any other leading whitespace is carried through as-is, which gives quoted
+/// and indented prose a hanging indent too. A line with no leading whitespace
+/// and no branch glyph gets no indent, so ordinary prose still wraps flush.
+/// The indent is dropped entirely if it would leave less than half the width
+/// for content, since a deep indent on a narrow window costs more than the
+/// alignment buys.
+fn hanging_indent(cells: &[Cell], width: usize) -> Vec<Cell> {
+    let lead = cells.iter().take_while(|c| c.ch == ' ').count();
+    let mut out: Vec<Cell> = cells[..lead].to_vec();
+    // A branch connector (`├─`, `└─`) becomes the rail that continues it.
+    if let Some(c) = cells.get(lead)
+        && matches!(c.ch, '├' | '└')
+    {
+        out.push(Cell::new('│', c.attr));
+        // The dashes and the single space that follow them are blanked, so the
+        // rail sits alone under the glyph it continues.
+        for c in cells[lead + 1..]
+            .iter()
+            .take_while(|c| matches!(c.ch, '─' | ' '))
+        {
+            out.push(Cell::new(' ', c.attr));
+        }
+    }
+    if out.len() * 2 >= width {
+        Vec::new()
+    } else {
+        out
+    }
 }
 
 /// A scrollback of styled lines, with autoscroll that releases when the user
@@ -1661,6 +1717,50 @@ gh"
             "abcdefghijkl",
             "the logical text is preserved even though it had to be broken mid-token"
         );
+    }
+
+    /// A tool-call branch whose value is too long for the window must keep its
+    /// shape: the continuation sits under the rail, not at column 0, where it
+    /// would read as a new branch.
+    #[test]
+    fn a_wrapped_tool_branch_continues_under_the_rail_not_at_column_zero() {
+        // 17 columns wide, one of which the scrollbar takes: 16 for content.
+        let mut v = StreamView::new(Rect::new(0, 0, 17, 20));
+        v.push_line(&line("  ├─ task ─ alpha beta gamma"));
+
+        let mut terminal = fake_terminal(20, 20);
+        v.draw(&mut terminal);
+        let row = |r: i16| -> String {
+            (0..16)
+                .map(|c| terminal.read_cell(c, r).unwrap().ch)
+                .collect()
+        };
+        assert_eq!(row(0), "  ├─ task ─     ");
+        assert_eq!(row(1), "  │  alpha beta ");
+        assert_eq!(row(2), "  │  gamma      ");
+        assert_eq!(
+            v.plain_text(),
+            "  ├─ task ─ alpha beta gamma",
+            "the hanging indent is presentation only; Save As gets the logical line"
+        );
+    }
+
+    /// Ordinary prose has no branch glyph and no leading space, so it must keep
+    /// wrapping flush left rather than acquiring an indent.
+    #[test]
+    fn prose_without_a_branch_glyph_still_wraps_flush_left() {
+        let mut v = StreamView::new(Rect::new(0, 0, 12, 20));
+        v.push_line(&line("alpha beta gamma"));
+
+        let mut terminal = fake_terminal(20, 20);
+        v.draw(&mut terminal);
+        let row = |r: i16| -> String {
+            (0..11)
+                .map(|c| terminal.read_cell(c, r).unwrap().ch)
+                .collect()
+        };
+        assert_eq!(row(0), "alpha beta ");
+        assert_eq!(row(1), "gamma      ");
     }
 
     #[test]
