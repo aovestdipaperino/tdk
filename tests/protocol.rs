@@ -154,6 +154,51 @@ fn a_second_live_writer_is_refused() {
     );
 }
 
+/// The old socket's EOF is observed on its own pump thread, so a client that
+/// closes and redials back-to-back can have its new connection reach the
+/// accept loop while the old one still counts as live. That is a scheduling
+/// gap, not a second writer: the server must give the old attachment a
+/// bounded moment to detach rather than refuse the redial. Here the redial
+/// arrives *before* the old socket even closes, and the close follows a beat
+/// later, well inside the grace — the same shape as a starved pump thread.
+#[test]
+fn a_redial_that_lands_before_the_old_eof_is_observed_still_attaches() {
+    let server = Server::bind(0).unwrap();
+    let reply = hello(server.control_port(), "HELLO 1 tokens grace");
+    let port: u16 = reply.strip_prefix("PORT ").unwrap().parse().unwrap();
+
+    let mut first = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    first.write_all(b"x").unwrap();
+    wait_for(&server, |ev| {
+        matches!(ev, ServerEvent::Bytes { .. }).then_some(())
+    });
+
+    let closer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(first);
+    });
+    let mut second = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    second.write_all(b"redial").unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let mut banner = [0u8; 64];
+    if let Ok(n) = second.read(&mut banner)
+        && n > 0
+    {
+        panic!(
+            "redial refused while the old socket was closing: {}",
+            String::from_utf8_lossy(&banner[..n])
+        );
+    }
+    let got = wait_for(&server, |ev| match ev {
+        ServerEvent::Bytes { data, .. } if data == b"redial" => Some(data.clone()),
+        _ => None,
+    });
+    closer.join().unwrap();
+    assert_eq!(got, b"redial");
+}
+
 #[test]
 fn bad_names_are_refused_and_the_server_stays_up() {
     let server = Server::bind(0).unwrap();

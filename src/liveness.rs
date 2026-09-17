@@ -136,15 +136,18 @@ fn is_running_at(path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    /// A lock path unique to this test process, so the test never collides
-    /// with a real console or a parallel test binary.
-    fn test_path() -> PathBuf {
-        std::env::temp_dir().join(format!("tdk-test-{}-{}.lock", std::process::id(), line!()))
+    /// A lock path unique to this test process *and* to the calling test, so
+    /// a test never collides with a real console, a parallel test binary, or
+    /// its sibling running on another thread. (`line!()` inside this helper
+    /// expands to the helper's own line, the same for every caller, which
+    /// let the two tests below share one file and race.)
+    fn test_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tdk-test-{}-{tag}.lock", std::process::id()))
     }
 
     #[test]
     fn acquire_makes_is_running_true_and_release_makes_it_false() {
-        let path = test_path();
+        let path = test_path("acquire-release");
         let _ = std::fs::remove_file(&path);
 
         let lock = acquire_at(&path).expect("acquire should succeed with no holder");
@@ -164,7 +167,7 @@ mod tests {
 
     #[test]
     fn is_running_is_false_when_no_file_exists() {
-        let path = test_path();
+        let path = test_path("no-file");
         let _ = std::fs::remove_file(&path);
         assert!(
             !is_running_at(&path),

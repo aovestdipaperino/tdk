@@ -27,6 +27,20 @@ use crate::proto::{HelloError, StreamKind, parse_hello};
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Read chunk size for a data socket.
 const READ_CHUNK: usize = 8192;
+/// How long a new data connection waits for the session's previous
+/// attachment to let go before it is refused as a second writer.
+///
+/// A client that closes and immediately redials can reach the accept loop
+/// before the old socket's pump thread has even observed its EOF, so `live`
+/// is still true for a connection that is already gone. That is a
+/// scheduling gap, not a competing writer: on a loaded machine (CI) it
+/// showed up as a redial refused with `ERR already attached`. Waiting a
+/// bounded moment for the old guard to drop closes the gap without changing
+/// the rule — a first writer that really is still connected keeps `live`
+/// true past the deadline and the second is refused as before.
+const ATTACH_GRACE: Duration = Duration::from_millis(250);
+/// Poll interval while waiting out [`ATTACH_GRACE`].
+const ATTACH_GRACE_POLL: Duration = Duration::from_millis(5);
 
 /// Stable identifier for a session, independent of its name.
 pub type SessionId = u64;
@@ -472,18 +486,19 @@ fn open_or_reuse(
             // unguarded atomic ops (the old `live.swap`) is exactly the
             // torn read/write that let a stale `LiveGuard::drop` race a
             // fresh attach (defect 3).
-            let attach = {
-                let mut map = sessions.lock().unwrap();
-                match map.get_mut(&name) {
-                    None => AttachOutcome::SessionGone,
-                    Some(s) if s.live.load(Ordering::SeqCst) => AttachOutcome::Rejected,
-                    Some(s) => {
-                        s.live.store(true, Ordering::SeqCst);
-                        let generation = s.generation.fetch_add(1, Ordering::SeqCst) + 1;
-                        s.idle_since = None;
-                        AttachOutcome::Attached { generation }
-                    }
+            //
+            // A `Rejected` verdict is only final once the previous
+            // attachment has had `ATTACH_GRACE` to let go: its EOF is
+            // observed on another thread, and a back-to-back redial can
+            // outrun it (see `ATTACH_GRACE`). The lock is released between
+            // polls so that guard's drop can run.
+            let deadline = Instant::now() + ATTACH_GRACE;
+            let attach = loop {
+                let outcome = try_attach(&sessions, &name);
+                if !matches!(outcome, AttachOutcome::Rejected) || Instant::now() >= deadline {
+                    break outcome;
                 }
+                std::thread::sleep(ATTACH_GRACE_POLL);
             };
 
             match attach {
@@ -516,6 +531,23 @@ fn open_or_reuse(
     });
 
     Ok(port)
+}
+
+/// One attach attempt: the "is someone already attached" check and the
+/// attach itself (flipping `live`, bumping `generation`, clearing
+/// `idle_since`) as a single transaction under the session-map lock.
+fn try_attach(sessions: &Mutex<HashMap<String, Session>>, name: &str) -> AttachOutcome {
+    let mut map = sessions.lock().unwrap();
+    match map.get_mut(name) {
+        None => AttachOutcome::SessionGone,
+        Some(s) if s.live.load(Ordering::SeqCst) => AttachOutcome::Rejected,
+        Some(s) => {
+            s.live.store(true, Ordering::SeqCst);
+            let generation = s.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            s.idle_since = None;
+            AttachOutcome::Attached { generation }
+        }
+    }
 }
 
 /// Reads a data socket to EOF, forwarding chunks as events.
