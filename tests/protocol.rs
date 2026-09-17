@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
-use turbo_debug_console::proto::StreamKind;
-use turbo_debug_console::registry::{Server, ServerEvent};
+use tdk::proto::StreamKind;
+use tdk::registry::{Server, ServerEvent};
 
 /// Sends a handshake to the control port and returns the reply line.
 fn hello(port: u16, line: &str) -> String {

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Enzo Lombardi
 // SPDX-License-Identifier: MIT
 
-//! `turbo-debug-console` — a Turbo Vision monitor for model-token streams.
+//! `tdk` — a Turbo Vision monitor for model-token streams.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -9,15 +9,16 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use tdk::cmd;
+use tdk::logo::Logo;
+use tdk::proto::{PROTOCOL_VERSION, StreamKind};
+use tdk::registry::{Server, ServerEvent, SessionId};
+use tdk::session::{Sessions, SharedStreamView, format_title};
+use tdk::streamview::StreamView;
 use trace_stream::render::RenderOptions;
-use turbo_debug_console::cmd;
-use turbo_debug_console::proto::{PROTOCOL_VERSION, StreamKind};
-use turbo_debug_console::registry::{Server, ServerEvent, SessionId};
-use turbo_debug_console::session::{Sessions, SharedStreamView, format_title};
-use turbo_debug_console::streamview::StreamView;
 use turbo_vision::app::Application;
-use turbo_vision::core::command::{CM_NEXT, CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_ZOOM};
-use turbo_vision::core::event::{EventType, KB_ALT_X, KB_F5, KB_F6, KB_F10};
+use turbo_vision::core::command::{CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_ZOOM};
+use turbo_vision::core::event::{EventType, KB_ALT_X, KB_F5, KB_F6, KB_F8, KB_F10};
 use turbo_vision::core::geometry::Rect;
 use turbo_vision::core::menu_data::{Menu, MenuItem};
 use turbo_vision::core::state::{SF_CLOSED, SF_SHADOW};
@@ -94,15 +95,15 @@ fn handle_cli_flags() {
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-V" | "--version" => {
-                println!("tdc {}", env!("CARGO_PKG_VERSION"));
+                println!("tdk {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "-h" | "--help" => {
                 println!(
-                    "tdc {}\n\
+                    "tdk {}\n\
                      {}\n\
                      \n\
-                     USAGE:\n    tdc\n\
+                     USAGE:\n    tdk\n\
                      \n\
                      Takes no options: it listens on the fixed control port {CONTROL_PORT}.\n\
                      \n\
@@ -148,21 +149,28 @@ fn main() -> turbo_vision::core::error::Result<()> {
 
     // Best-effort liveness marker: hold an exclusive advisory lock on a
     // well-known temp file for the life of the process, so
-    // `turbo_debug_console::is_running` can answer "is a console up?" with two
+    // `tdk::is_running` can answer "is a console up?" with two
     // syscalls and no network call. The kernel releases the lock the instant
     // the process exits or crashes, so there is no stale state to clean up.
     // The control-port bind below remains the authoritative single-instance
     // check; if the lock cannot be acquired (another console holds it, or the
     // temp dir is unusable) we simply proceed and let the bind fail with its
     // usual message.
-    let _liveness_lock = turbo_debug_console::liveness::acquire();
+    let _liveness_lock = tdk::liveness::acquire();
 
-    set_terminal_title("Turbo Debug Console");
+    set_terminal_title("TDK");
 
     let mut app = Application::new()?;
     let (width, height) = app.terminal.size();
     app.set_menu_bar(build_menu_bar(width));
     app.set_status_line(build_status_line(width, height, 0));
+    let desk = app.desktop.bounds();
+    app.desktop.add(Box::new(Logo::new(Rect::new(
+        0,
+        0,
+        desk.width(),
+        desk.height(),
+    ))));
 
     let mut server = match Server::bind(CONTROL_PORT) {
         Ok(s) => s,
@@ -170,7 +178,7 @@ fn main() -> turbo_vision::core::error::Result<()> {
             // The terminal is already in raw mode; drop out of it before
             // printing, or the message lands in a half-torn-down screen.
             drop(app);
-            eprintln!("tdc: cannot bind 127.0.0.1:{CONTROL_PORT}: {e}");
+            eprintln!("tdk: cannot bind 127.0.0.1:{CONTROL_PORT}: {e}");
             std::process::exit(1);
         }
     };
@@ -341,6 +349,7 @@ impl Console {
             }
             cmd::CM_OPEN_CAPTURE => self.open_capture(app),
             cmd::CM_CLEANUP => self.cleanup_windows(app),
+            cmd::CM_NEXT_WINDOW => self.next_window(app),
             cmd::CM_AUTO_CLEANUP => {
                 let on = !auto_cleanup_enabled();
                 set_auto_cleanup(on);
@@ -367,6 +376,32 @@ impl Console {
             cmd::CM_CASCADE_WINDOWS => app.cascade(),
             _ => {}
         }
+    }
+
+    /// Window > Next: raises the window created after the focused one, in
+    /// creation order, wrapping round to the oldest. Only tracked windows
+    /// still on the desktop take part.
+    ///
+    /// Creation order rather than z-order because `Desktop` exposes no
+    /// `ViewId` for "the bottom window", and because it matches how Auto-tile
+    /// lays windows out, so F6 walks the tiled grid left-to-right.
+    fn next_window(&self, app: &mut Application) {
+        let mut windows: Vec<(ViewId, Instant)> = self
+            .window_created
+            .iter()
+            .filter(|(view_id, _)| app.desktop.contains_id(**view_id))
+            .map(|(view_id, created)| (*view_id, *created))
+            .collect();
+        if windows.len() < 2 {
+            return;
+        }
+        windows.sort_by_key(|(_, created)| *created);
+        let top = app.desktop.top_view_id();
+        let current = windows
+            .iter()
+            .position(|(view_id, _)| Some(*view_id) == top);
+        let next = current.map_or(0, |i| (i + 1) % windows.len());
+        app.desktop.bring_to_front(windows[next].0);
     }
 
     /// Window > Cleanup: closes every window whose session no longer has a
@@ -488,12 +523,17 @@ impl Console {
             app.disable_command(cmd::CM_COPY);
         }
         // Next / Tile / Cascade only mean something with more than one
-        // window. `CM_NEXT` is safe to drive directly, but Tile and Cascade
-        // use this crate's own command ids: Turbo Vision's `idle()` owns the
-        // enabled state of its `CM_TILE` / `CM_CASCADE` and re-enables them
-        // for any window count >= 1 (see `cmd::CM_CASCADE_WINDOWS`).
+        // window. All three use this crate's own command ids: Turbo Vision's
+        // `idle()` owns the enabled state of its `CM_TILE` / `CM_CASCADE` and
+        // re-enables them for any window count >= 1 (see
+        // `cmd::CM_CASCADE_WINDOWS`), and its `CM_NEXT` would bury the
+        // window under the desktop logo (see `cmd::CM_NEXT_WINDOW`).
         let multiple_windows = app.desktop.count_tileable_windows() > 1;
-        for command in [CM_NEXT, cmd::CM_TILE_WINDOWS, cmd::CM_CASCADE_WINDOWS] {
+        for command in [
+            cmd::CM_NEXT_WINDOW,
+            cmd::CM_TILE_WINDOWS,
+            cmd::CM_CASCADE_WINDOWS,
+        ] {
             if multiple_windows {
                 app.enable_command(command);
             } else {
@@ -927,12 +967,12 @@ fn build_menu_bar(width: i16) -> MenuBar {
     menu_bar.add_submenu(SubMenu::new(
         "~W~indow",
         Menu::from_items(vec![
-            MenuItem::new("~N~ext", CM_NEXT, 0, 0),
+            MenuItem::new("~N~ext", cmd::CM_NEXT_WINDOW, KB_F6, 0),
             MenuItem::new("~Z~oom", CM_ZOOM, KB_F5, 0),
             MenuItem::new("~T~ile", cmd::CM_TILE_WINDOWS, 0, 0),
             MenuItem::new("C~a~scade", cmd::CM_CASCADE_WINDOWS, 0, 0),
             MenuItem::separator(),
-            MenuItem::new("Clean~u~p", cmd::CM_CLEANUP, 0, 0),
+            MenuItem::new("Clean~u~p", cmd::CM_CLEANUP, KB_F8, 0),
             // Flag items, so the tick draws in the menu's dedicated check
             // column — flush against the text, exactly like Edit > Block
             // mode — rather than embedded in the item's text string. The
@@ -958,7 +998,8 @@ fn build_status_line(width: i16, height: i16, live: usize) -> StatusLine {
         Rect::new(0, height - 1, width, height),
         vec![
             StatusItem::new("~F5~ Zoom", KB_F5, CM_ZOOM),
-            StatusItem::new("~F6~ Next", KB_F6, CM_NEXT),
+            StatusItem::new("~F6~ Next", KB_F6, cmd::CM_NEXT_WINDOW),
+            StatusItem::new("~F8~ Cleanup", KB_F8, cmd::CM_CLEANUP),
             StatusItem::new("~F10~ Menu", KB_F10, 0),
             StatusItem::new("~Alt-X~ Exit", KB_ALT_X, CM_QUIT),
             StatusItem::new(&format!("{live} conn"), 0, 0),
@@ -1008,7 +1049,7 @@ static NEXT_CAPTURE_ID: std::sync::atomic::AtomicU64 =
 #[cfg(test)]
 mod console_decision_tests {
     use super::*;
-    use turbo_debug_console::registry::ServerEvent;
+    use tdk::registry::ServerEvent;
 
     /// Window > Cleanup lights up from `Sessions::is_connected`, the same
     /// state a window title reports as `[disconnected]`. A session is
@@ -1253,7 +1294,7 @@ mod console_decision_tests {
         assert_eq!(intent, None);
     }
 
-    fn test_view() -> turbo_debug_console::session::SharedView {
+    fn test_view() -> tdk::session::SharedView {
         std::rc::Rc::new(std::cell::RefCell::new(StreamView::new(Rect::new(
             0, 0, 80, 24,
         ))))
@@ -1399,7 +1440,7 @@ pub mod title_render_tests {
     /// `TEditWindow` does).
     #[test]
     fn stream_view_bounds_land_inside_the_frame_not_over_it() {
-        use turbo_debug_console::streamview::StreamView;
+        use tdk::streamview::StreamView;
 
         let window_bounds = Rect::new(0, 0, 40, 20);
         let view_bounds = super::session_view_bounds(window_bounds);
@@ -1430,7 +1471,7 @@ pub mod title_render_tests {
     /// and bottom border instead of stopping at the interior's edge.
     #[test]
     fn outer_bounds_overflow_the_interior_by_the_frame_width() {
-        use turbo_debug_console::streamview::StreamView;
+        use tdk::streamview::StreamView;
 
         let window_bounds = Rect::new(0, 0, 40, 20);
         let mut window = WindowBuilder::new()
@@ -1469,8 +1510,8 @@ mod window_overlap_tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use turbo_debug_console::session::SharedStreamView;
-    use turbo_debug_console::streamview::StreamView;
+    use tdk::session::SharedStreamView;
+    use tdk::streamview::StreamView;
     use turbo_vision::core::draw::Cell;
     use turbo_vision::core::event::Event;
     use turbo_vision::core::geometry::Rect;

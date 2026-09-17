@@ -38,3 +38,12 @@ pub const CM_AUTO_CLEANUP: CommandId = 1008;
 /// Window > Auto-tile (a flag: re-tile the desktop whenever a window opens
 /// or closes, in creation order, left-to-right then top-to-bottom)
 pub const CM_AUTO_TILE: CommandId = 1009;
+
+/// Window > Next (F6).
+///
+/// Not Turbo Vision's `CM_NEXT`: the desktop implements that by sending the
+/// top window to z-index 1, which is *under* the [`crate::logo::Logo`] view
+/// that sits there, so the window would vanish behind the wallpaper. This id
+/// is handled by `Console::handle_command` with `Desktop::bring_to_front`,
+/// cycling the tracked windows in creation order.
+pub const CM_NEXT_WINDOW: CommandId = 1010;

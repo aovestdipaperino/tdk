@@ -1,4 +1,4 @@
-# turbo-debug-console
+# tdk
 
 A Turbo Vision debug console for live token streams.
 
@@ -17,13 +17,13 @@ scrollback, and survives the producer disconnecting and coming back.
 ## Install
 
 ```sh
-brew install aovestdipaperino/tap/turbo-debug-console
+brew install aovestdipaperino/tap/tdk
 ```
 
 Or from crates.io:
 
 ```sh
-cargo install turbo-debug-console
+cargo install tdk
 ```
 
 ## Use
@@ -31,7 +31,7 @@ cargo install turbo-debug-console
 Run it:
 
 ```sh
-tdc
+tdk
 ```
 
 It listens on **port 7878**. Then stream something at it:
@@ -115,7 +115,8 @@ verbatim rather than dropped.
 |---|---|
 | `F10` | menu |
 | `F5` | zoom the focused window (also the `[▲]` / `[▼]` button in its title bar) |
-| `F6` | next window |
+| `F6` | next window (in the order the windows were created) |
+| `F8` | Cleanup: close every `[disconnected]` window |
 | `Alt-X` | quit |
 | `PgUp` / `PgDn` / `Home` / `End` | scroll the focused window |
 | mouse wheel | scroll the window under the pointer |
@@ -166,6 +167,11 @@ Cleanup until a window has actually lost its client, and Next / Tile / Cascade
 until there is more than one window. There is no Window > Close item — a
 window closes from the close box on its own frame.
 
+The empty desktop shows a large navy **TDK** on the usual Turbo Vision
+wallpaper. It is drawn with quadrant block characters, so it has twice the
+resolution of the character grid, and it stays centred when the terminal is
+resized. Windows open on top of it as before.
+
 ## How it renders
 
 The rendering is not a reimplementation. It runs
@@ -183,8 +189,8 @@ keeps that colour's hue rather than brightening it.
 ## Build from source
 
 ```sh
-git clone https://github.com/aovestdipaperino/turbo-debug-console
-cd turbo-debug-console
+git clone https://github.com/aovestdipaperino/tdk
+cd tdk
 cargo build --release
 ```
 

@@ -149,7 +149,7 @@ Ran clean for all 20 iterations — 22 passed, 0 failed, every time
   pattern for window placement, which this change didn't touch). Please
   verify visually.
 - Did not manually run a real `tracing_subscriber::fmt().json()` program
-  against a live `turbo-debug-console` process end-to-end (no TTY to view
+  against a live `tdk` process end-to-end (no TTY to view
   the result in); relied on hand-constructed JSON matching the documented
   `tracing-subscriber` 0.3.23 JSON shape instead.
 - The exact default-foreground color choice for `fields.message` (LightGray)

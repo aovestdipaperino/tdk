@@ -33,7 +33,7 @@ use libc::{LOCK_EX, LOCK_NB, LOCK_SH};
 /// The well-known file the console locks. Lives in the temp directory; it is
 /// not a config file -- it holds no settings, just an advisory lock, and the
 /// OS creates or removes it as needed.
-const LOCK_NAME: &str = "turbo-debug-console.lock";
+const LOCK_NAME: &str = "tdk.lock";
 
 /// How many times [`acquire`] retries the exclusive lock before giving up, and
 /// how long it sleeps between tries. A concurrent [`is_running`] check holds a
@@ -139,11 +139,7 @@ mod tests {
     /// A lock path unique to this test process, so the test never collides
     /// with a real console or a parallel test binary.
     fn test_path() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "turbo-debug-console-test-{}-{}.lock",
-            std::process::id(),
-            line!()
-        ))
+        std::env::temp_dir().join(format!("tdk-test-{}-{}.lock", std::process::id(), line!()))
     }
 
     #[test]

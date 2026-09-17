@@ -164,6 +164,127 @@ mod tests {
         </｜DSML｜invoke>\n\
         </｜DSML｜tool_calls>\n";
 
+    /// The `DeepSeek` V4.1 Flash spelling of the same stanza: the tags carry a
+    /// leading space and the outer tag is ` calls` rather than `tool_calls`.
+    /// The console is handed bytes off a socket with no model name attached,
+    /// so it cannot be told which dialect a session speaks — `trace_stream`
+    /// matches both openers and reads the stanza in whichever one opened it.
+    const REAL_DSML41_READ: &str = "<\u{ff5c}DSML\u{ff5c} calls>\n\
+        <\u{ff5c}DSML\u{ff5c} invoke name=\"read\">\n\
+        <\u{ff5c}DSML\u{ff5c} parameter name=\"path\" string=\"true\">src/main.rs</\u{ff5c}DSML\u{ff5c} parameter>\n\
+        </\u{ff5c}DSML\u{ff5c} invoke>\n\
+        </\u{ff5c}DSML\u{ff5c} calls>\n";
+
+    /// Qwen3.8's dialect, which is not DSML-shaped at all: one `<tool_call>`
+    /// opener, `<function=…>` for the tool and `<parameter=…>` for each
+    /// argument. Same rule as the two DSML dialects — the console is handed
+    /// bytes with no model name, so the opener is what names the dialect.
+    const REAL_QWEN_READ: &str = "<tool_call>\n\
+        <function=read>\n\
+        <parameter=path>\n\
+        src/main.rs\n\
+        </parameter>\n\
+        </function>\n\
+        </tool_call>";
+
+    #[test]
+    fn a_qwen_tool_call_becomes_a_banner_not_raw_markup() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_QWEN_READ.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("<function=") && !txt.contains("<parameter="),
+            "raw Qwen markup must never reach the screen: {txt:?}"
+        );
+        assert!(txt.contains("read"), "banner should name the tool: {txt:?}");
+        assert!(
+            txt.contains("src/main.rs"),
+            "banner should name the path: {txt:?}"
+        );
+    }
+
+    /// A Qwen stanza has no terminator that ends a *run*, so the renderer only
+    /// settles it at end of generation. A window that never sees `finish`
+    /// still has to show the banner as the value streams in.
+    #[test]
+    fn a_qwen_call_banners_before_the_stream_ends() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_QWEN_READ.as_bytes(), &mut v);
+        let txt = v.plain_text();
+        assert!(
+            txt.contains("read"),
+            "the banner must not wait for finish: {txt:?}"
+        );
+    }
+
+    /// One connection is one `Pipeline`, and a session outlives a stanza, so
+    /// a DSML stanza and a Qwen one must be able to share a window.
+    #[test]
+    fn dsml_and_qwen_render_in_one_session() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_DSML_READ.as_bytes(), &mut v);
+        p.feed(b"between\n", &mut v);
+        p.feed(REAL_QWEN_READ.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("DSML"),
+            "raw DSML reached the screen: {txt:?}"
+        );
+        assert!(
+            !txt.contains("<function="),
+            "raw Qwen markup reached the screen: {txt:?}"
+        );
+        assert_eq!(
+            txt.matches("src/main.rs").count(),
+            2,
+            "both stanzas should render a banner: {txt:?}"
+        );
+    }
+
+    #[test]
+    fn a_v41_dsml_tool_call_becomes_a_banner_not_raw_markup() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_DSML41_READ.as_bytes(), &mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("DSML"),
+            "raw DSML must never reach the screen: {txt:?}"
+        );
+        assert!(txt.contains("read"), "banner should name the tool: {txt:?}");
+        assert!(
+            txt.contains("src/main.rs"),
+            "banner should name the path: {txt:?}"
+        );
+    }
+
+    /// One connection is one `Pipeline`, and a session outlives a stanza, so
+    /// the two dialects must be able to follow each other in a single window.
+    #[test]
+    fn both_dsml_dialects_render_in_one_session() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_DSML41_READ.as_bytes(), &mut v);
+        p.feed(b"between\n", &mut v);
+        p.feed(REAL_DSML_READ.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("DSML"),
+            "raw DSML reached the screen: {txt:?}"
+        );
+        assert_eq!(
+            txt.matches("src/main.rs").count(),
+            2,
+            "both stanzas should render a banner: {txt:?}"
+        );
+    }
+
     #[test]
     fn a_dsml_tool_call_becomes_a_banner_not_raw_markup() {
         let mut p = Pipeline::new(opts());
