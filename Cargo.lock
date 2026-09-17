@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "tdk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "serde_json",
@@ -1020,9 +1020,9 @@ dependencies = [
 
 [[package]]
 name = "trace-stream"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ba73e52a5937ef89eec6f42fe76a2ca5bb81ec5c1fff35a69285cd253efea42"
+checksum = "c9a805e11a3eec3ba32dd45f82c7472ec8bfaf8e4184ee2984b7c77d778ef71f"
 
 [[package]]
 name = "tracing"
