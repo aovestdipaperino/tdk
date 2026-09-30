@@ -220,8 +220,10 @@ fn main() -> turbo_vision::core::error::Result<()> {
             // Alt-X and File > Exit both land here as `running == false`:
             // the library handles `CM_QUIT` itself and clears the event, so
             // the app never sees the command and asks after the fact.
-            if !app.running && !confirm_quit(&mut app, server.live_count()) {
-                app.running = true;
+            // `confirm_quit` re-arms `running` to show its dialog, so the
+            // answer has to be written back either way.
+            if !app.running {
+                app.running = !confirm_quit(&mut app, server.live_count());
             }
             dirty = true;
             if event.what == EventType::Command {
@@ -280,8 +282,9 @@ fn main() -> turbo_vision::core::error::Result<()> {
 /// with none there is nothing to lose and the answer is always yes.
 ///
 /// `app.running` is re-armed first because a modal dialog returns at once
-/// while it is false. Alt-X inside the dialog quits too, which is what
-/// pressing it twice should mean.
+/// while it is false, so the caller must set it from the answer. The
+/// dialog runs its own event loop, so Alt-X inside it does nothing; only
+/// Yes quits.
 fn confirm_quit(app: &mut Application, live: usize) -> bool {
     if live == 0 {
         return true;
@@ -293,7 +296,7 @@ fn confirm_quit(app: &mut Application, live: usize) -> bool {
         format!("{live} connections are")
     };
     let answer = msgbox::confirmation_box_yes_no(app, &format!("{what} still open. Quit anyway?"));
-    answer == CM_YES || answer == CM_QUIT
+    answer == CM_YES
 }
 
 /// Everything the main loop mutates across frames: live sessions and the
