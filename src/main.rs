@@ -17,14 +17,17 @@ use tdk::session::{Sessions, SharedStreamView, format_title};
 use tdk::streamview::StreamView;
 use trace_stream::render::RenderOptions;
 use turbo_vision::app::Application;
-use turbo_vision::core::command::{CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_YES, CM_ZOOM};
+use turbo_vision::core::command::{CM_NO, CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_YES, CM_ZOOM};
 use turbo_vision::core::event::{EventType, KB_ALT_X, KB_F5, KB_F6, KB_F8, KB_F10};
 use turbo_vision::core::geometry::Rect;
 use turbo_vision::core::menu_data::{Menu, MenuItem};
 use turbo_vision::core::state::{SF_CLOSED, SF_SHADOW};
+use turbo_vision::views::button::Button;
+use turbo_vision::views::dialog::Dialog;
 use turbo_vision::views::file_dialog::FileDialog;
 use turbo_vision::views::menu_bar::{MenuBar, SubMenu};
 use turbo_vision::views::msgbox;
+use turbo_vision::views::static_text::StaticText;
 use turbo_vision::views::status_line::{StatusItem, StatusLine};
 use turbo_vision::views::view::{View, ViewId};
 use turbo_vision::views::window::{Window, WindowBuilder};
@@ -295,8 +298,56 @@ fn confirm_quit(app: &mut Application, live: usize) -> bool {
     } else {
         format!("{live} connections are")
     };
-    let answer = msgbox::confirmation_box_yes_no(app, &format!("{what} still open. Quit anyway?"));
+    let answer = confirm_no_default(app, &format!("{what} still open. Quit anyway?"));
     answer == CM_YES
+}
+
+/// A one-line Yes/No confirmation whose default, focused button is No, so a
+/// stray Enter or Space keeps the console up. The library's
+/// `msgbox::confirmation_box_yes_no` focuses Yes, which is the wrong way
+/// round for a question whose Yes drops live connections.
+fn confirm_no_default(app: &mut Application, message: &str) -> u16 {
+    // Widths count the `~` hotkey markers, as the library's message box
+    // does, so the buttons line up the same way.
+    const YES: (&str, i16) = (" ~Y~es", 6);
+    const NO: (&str, i16) = (" ~N~o", 5);
+    // Same geometry as the library's message box: frame, a row of padding
+    // above and below the text, and a two-row button line.
+    let (screen_w, screen_h) = app.terminal.size();
+    let width = i16::try_from(message.chars().count() + 6)
+        .unwrap_or(i16::MAX)
+        .clamp(30, 60)
+        .min(screen_w);
+    let height = 7;
+    let x = (screen_w - width) / 2;
+    let y = (screen_h - height) / 2;
+
+    let mut dialog = Dialog::new(Rect::new(x, y, x + width, y + height), "\u{2753} Confirm");
+    dialog.add(Box::new(StaticText::new(
+        Rect::new(3, 1, width - 2, height - 4),
+        message,
+    )));
+    let (yes, yes_w) = YES;
+    let (no, no_w) = NO;
+    let button_y = height - 4;
+    let yes_x = (width - (yes_w + 2 + no_w + 2)) / 2;
+    let no_x = yes_x + yes_w + 2;
+    // No is added first: `Dialog::execute` focuses the first focusable
+    // child, and the focused button is the one Enter and Space press. The
+    // bounds, not the insertion order, keep Yes drawn on the left.
+    dialog.add(Box::new(Button::new(
+        Rect::new(no_x, button_y, no_x + no_w, button_y + 2),
+        no,
+        CM_NO,
+        true,
+    )));
+    dialog.add(Box::new(Button::new(
+        Rect::new(yes_x, button_y, yes_x + yes_w, button_y + 2),
+        yes,
+        CM_YES,
+        false,
+    )));
+    dialog.execute(app)
 }
 
 /// Everything the main loop mutates across frames: live sessions and the
