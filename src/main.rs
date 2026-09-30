@@ -17,7 +17,7 @@ use tdk::session::{Sessions, SharedStreamView, format_title};
 use tdk::streamview::StreamView;
 use trace_stream::render::RenderOptions;
 use turbo_vision::app::Application;
-use turbo_vision::core::command::{CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_ZOOM};
+use turbo_vision::core::command::{CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_YES, CM_ZOOM};
 use turbo_vision::core::event::{EventType, KB_ALT_X, KB_F5, KB_F6, KB_F8, KB_F10};
 use turbo_vision::core::geometry::Rect;
 use turbo_vision::core::menu_data::{Menu, MenuItem};
@@ -217,6 +217,12 @@ fn main() -> turbo_vision::core::error::Result<()> {
             // `handle_event`, so it would show the clobbered state.
             console.sync_command_state(&mut app);
             app.handle_event(&mut event);
+            // Alt-X and File > Exit both land here as `running == false`:
+            // the library handles `CM_QUIT` itself and clears the event, so
+            // the app never sees the command and asks after the fact.
+            if !app.running && !confirm_quit(&mut app, server.live_count()) {
+                app.running = true;
+            }
             dirty = true;
             if event.what == EventType::Command {
                 console.handle_command(&mut app, event.command);
@@ -268,6 +274,26 @@ fn main() -> turbo_vision::core::error::Result<()> {
     }
 
     Ok(())
+}
+
+/// Asks before quitting while any session still has a live connection;
+/// with none there is nothing to lose and the answer is always yes.
+///
+/// `app.running` is re-armed first because a modal dialog returns at once
+/// while it is false. Alt-X inside the dialog quits too, which is what
+/// pressing it twice should mean.
+fn confirm_quit(app: &mut Application, live: usize) -> bool {
+    if live == 0 {
+        return true;
+    }
+    app.running = true;
+    let what = if live == 1 {
+        "1 connection is".to_owned()
+    } else {
+        format!("{live} connections are")
+    };
+    let answer = msgbox::confirmation_box_yes_no(app, &format!("{what} still open. Quit anyway?"));
+    answer == CM_YES || answer == CM_QUIT
 }
 
 /// Everything the main loop mutates across frames: live sessions and the
