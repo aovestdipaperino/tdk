@@ -47,3 +47,12 @@ pub const CM_AUTO_TILE: CommandId = 1009;
 /// is handled by `Console::handle_command` with `Desktop::bring_to_front`,
 /// cycling the tracked windows in creation order.
 pub const CM_NEXT_WINDOW: CommandId = 1010;
+
+/// Status line "F10 Menu", clicked.
+///
+/// Turbo Vision has no counterpart to Borland's `cmMenu`, so a status item
+/// with command 0 fires nothing when clicked; the F10 key only works
+/// because the menu bar grabs it before the status line sees it.
+/// `Console::handle_command` answers this id by posting an F10 keystroke,
+/// which the menu bar opens the first menu on.
+pub const CM_OPEN_MENU: CommandId = 1011;

@@ -18,7 +18,7 @@ use tdk::streamview::StreamView;
 use trace_stream::render::RenderOptions;
 use turbo_vision::app::Application;
 use turbo_vision::core::command::{CM_NO, CM_QUIT, CM_TOGGLE_BLOCK_MODE, CM_YES, CM_ZOOM};
-use turbo_vision::core::event::{EventType, KB_ALT_X, KB_F5, KB_F6, KB_F8, KB_F10};
+use turbo_vision::core::event::{Event, EventType, KB_ALT_X, KB_F5, KB_F6, KB_F8, KB_F10};
 use turbo_vision::core::geometry::Rect;
 use turbo_vision::core::menu_data::{Menu, MenuItem};
 use turbo_vision::core::state::{SF_CLOSED, SF_SHADOW};
@@ -430,6 +430,7 @@ impl Console {
             cmd::CM_OPEN_CAPTURE => self.open_capture(app),
             cmd::CM_CLEANUP => self.cleanup_windows(app),
             cmd::CM_NEXT_WINDOW => self.next_window(app),
+            cmd::CM_OPEN_MENU => app.put_event(Event::keyboard(KB_F10)),
             cmd::CM_AUTO_CLEANUP => {
                 let on = !auto_cleanup_enabled();
                 set_auto_cleanup(on);
@@ -1080,7 +1081,7 @@ fn build_status_line(width: i16, height: i16, live: usize) -> StatusLine {
             StatusItem::new("~F5~ Zoom", KB_F5, CM_ZOOM),
             StatusItem::new("~F6~ Next", KB_F6, cmd::CM_NEXT_WINDOW),
             StatusItem::new("~F8~ Cleanup", KB_F8, cmd::CM_CLEANUP),
-            StatusItem::new("~F10~ Menu", KB_F10, 0),
+            StatusItem::new("~F10~ Menu", KB_F10, cmd::CM_OPEN_MENU),
             StatusItem::new("~Alt-X~ Exit", KB_ALT_X, CM_QUIT),
             StatusItem::new(&format!("{live} conn"), 0, 0),
         ],
