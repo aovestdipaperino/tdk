@@ -220,6 +220,26 @@ mod tests {
         );
     }
 
+    /// A thought that quotes `</think>` in backticks is mentioning the tag,
+    /// not closing the block: the quote must stay on screen and the rest of
+    /// the thought must not spill into the answer. Needs trace-stream ≥ 0.1.7.
+    #[test]
+    fn a_quoted_think_close_does_not_end_the_thought() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(
+            b"<think>Handles `</think>` inside parameter values.</think>answer",
+            &mut v,
+        );
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            txt.contains("Handles `</think>` inside parameter values."),
+            "the quoted tag must render as text on one line: {txt:?}"
+        );
+        assert!(!txt.contains("values.</think>"), "{txt:?}");
+    }
+
     /// One connection is one `Pipeline`, and a session outlives a stanza, so
     /// a DSML stanza and a Qwen one must be able to share a window.
     #[test]

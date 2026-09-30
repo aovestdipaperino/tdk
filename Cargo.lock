@@ -1020,9 +1020,9 @@ dependencies = [
 
 [[package]]
 name = "trace-stream"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f984d61b181fa0ec98b580f5c3b485343fbbefa4ca4063833d782645e2686e2"
+checksum = "a0a713a69b918532335bb68cd6ea1bf55ef05e59f989c3b371befe2f9004feab"
 
 [[package]]
 name = "tracing"
