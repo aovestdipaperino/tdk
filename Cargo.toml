@@ -20,7 +20,7 @@ name = "tdk"
 path = "src/main.rs"
 
 [dependencies]
-trace-stream = "0.1.7"
+trace-stream = "0.1.8"
 turbo-vision = "2.4.2"
 libc = "0.2"
 serde_json = { version = "1", features = ["preserve_order"] }
