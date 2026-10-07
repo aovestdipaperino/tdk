@@ -76,6 +76,10 @@ impl Pipeline {
         let mut stream =
             StreamRenderer::new(TerminalSink::new(TokenRenderer::new(Vec::new(), opts)));
         stream.set_tool_names(tool_names());
+        // The console never learns which model a session runs, so Gemma's
+        // `<|tool_call>` opener must be adopted at the stanza like the DSML
+        // and Qwen ones; plank's own renderer only does that for Gemma.
+        stream.set_gemma_opener(true);
         Self {
             stream,
             asm: AnsiLineAssembler::new(),
@@ -186,6 +190,80 @@ mod tests {
         </parameter>\n\
         </function>\n\
         </tool_call>";
+
+    /// Gemma 4's dialect: `<|tool_call>call:NAME{…}<tool_call|>`, with every
+    /// string value between `<|"|>` delimiters. Same rule again — the opener
+    /// names the dialect. Needs trace-stream ≥ 0.1.8.
+    const REAL_GEMMA_READ: &str =
+        "<|tool_call>call:read{max_lines:20,path:<|\"|>src/main.rs<|\"|>}<tool_call|>";
+
+    #[test]
+    fn a_gemma_tool_call_becomes_a_banner_not_raw_markup() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(REAL_GEMMA_READ.as_bytes(), &mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("<|tool_call>") && !txt.contains("<|\"|>"),
+            "raw Gemma markup must never reach the screen: {txt:?}"
+        );
+        assert!(txt.contains("read"), "banner should name the tool: {txt:?}");
+        assert!(
+            txt.contains("src/main.rs"),
+            "banner should name the path: {txt:?}"
+        );
+    }
+
+    /// Bytes arrive split at arbitrary points, including inside the opener
+    /// and the `<|"|>` delimiter.
+    #[test]
+    fn a_gemma_call_split_byte_by_byte_still_banners() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        for b in REAL_GEMMA_READ.as_bytes() {
+            p.feed(std::slice::from_ref(b), &mut v);
+        }
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("<|"),
+            "raw Gemma markup reached the screen: {txt:?}"
+        );
+        assert!(txt.contains("src/main.rs"), "{txt:?}");
+    }
+
+    /// One connection is one `Pipeline`, so all three opener families must
+    /// be able to follow each other in a single window.
+    #[test]
+    fn gemma_dsml_and_qwen_render_in_one_session() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(b"<think>plan</think>", &mut v);
+        p.feed(REAL_GEMMA_READ.as_bytes(), &mut v);
+        p.feed(b"\nbetween\n", &mut v);
+        p.feed(REAL_DSML_READ.as_bytes(), &mut v);
+        p.feed(b"between\n", &mut v);
+        p.feed(REAL_QWEN_READ.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("<|"),
+            "raw Gemma markup reached the screen: {txt:?}"
+        );
+        assert!(
+            !txt.contains("DSML"),
+            "raw DSML reached the screen: {txt:?}"
+        );
+        assert!(
+            !txt.contains("<function="),
+            "raw Qwen markup reached the screen: {txt:?}"
+        );
+        assert_eq!(
+            txt.matches("src/main.rs").count(),
+            3,
+            "every stanza should render a banner: {txt:?}"
+        );
+    }
 
     #[test]
     fn a_qwen_tool_call_becomes_a_banner_not_raw_markup() {
