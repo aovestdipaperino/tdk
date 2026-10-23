@@ -80,6 +80,11 @@ impl Pipeline {
         // `<|tool_call>` opener must be adopted at the stanza like the DSML
         // and Qwen ones; plank's own renderer only does that for Gemma.
         stream.set_gemma_opener(true);
+        // Flint spells its opener `<tool_call>` like Qwen, so the stream reads
+        // it as Qwen; with sniffing on, a stanza that does not continue with
+        // `<function=` is re-read as Flint instead of failing as a malformed
+        // Qwen call.
+        stream.set_flint_sniffing(true);
         Self {
             stream,
             asm: AnsiLineAssembler::new(),
@@ -196,6 +201,65 @@ mod tests {
     /// names the dialect. Needs trace-stream ≥ 0.1.8.
     const REAL_GEMMA_READ: &str =
         "<|tool_call>call:read{max_lines:20,path:<|\"|>src/main.rs<|\"|>}<tool_call|>";
+
+    /// Flint's dialect: Qwen's `<tool_call>` opener, then the tool name and
+    /// `<arg_key>`/`<arg_value>` pairs. The opener cannot tell it from Qwen,
+    /// so the stanza is sniffed after it. Needs trace-stream ≥ 0.1.9.
+    const REAL_FLINT_BASH: &str = "<tool_call>bash<arg_key>command</arg_key>\
+        <arg_value>pwd && ls src/main.rs</arg_value></tool_call>";
+
+    #[test]
+    fn a_flint_tool_call_becomes_a_banner_not_raw_markup() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(b"<think>plan</think>", &mut v);
+        p.feed(REAL_FLINT_BASH.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(
+            !txt.contains("<arg_key>") && !txt.contains("invalid tool call"),
+            "a Flint call must banner, not fail as Qwen: {txt:?}"
+        );
+        assert!(
+            txt.contains("src/main.rs"),
+            "banner should show the command: {txt:?}"
+        );
+    }
+
+    /// Byte by byte, the sniff still happens at the first byte past the
+    /// opener.
+    #[test]
+    fn a_flint_call_split_byte_by_byte_still_banners() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        for b in REAL_FLINT_BASH.as_bytes() {
+            p.feed(std::slice::from_ref(b), &mut v);
+        }
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(!txt.contains("invalid tool call"), "{txt:?}");
+        assert!(txt.contains("src/main.rs"), "{txt:?}");
+    }
+
+    /// Flint and Qwen share the opener, so both must still render when they
+    /// follow each other in one window.
+    #[test]
+    fn flint_and_qwen_render_in_one_session() {
+        let mut p = Pipeline::new(opts());
+        let mut v = StreamView::new(Rect::new(0, 0, 80, 24));
+        p.feed(b"<think>plan</think>", &mut v);
+        p.feed(REAL_FLINT_BASH.as_bytes(), &mut v);
+        p.feed(b"\nbetween\n", &mut v);
+        p.feed(REAL_QWEN_READ.as_bytes(), &mut v);
+        p.finish(&mut v);
+        let txt = v.plain_text();
+        assert!(!txt.contains("invalid tool call"), "{txt:?}");
+        assert!(
+            !txt.contains("<function=") && !txt.contains("<arg_key>"),
+            "{txt:?}"
+        );
+        assert_eq!(txt.matches("src/main.rs").count(), 2, "{txt:?}");
+    }
 
     #[test]
     fn a_gemma_tool_call_becomes_a_banner_not_raw_markup() {
