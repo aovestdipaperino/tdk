@@ -1,5 +1,7 @@
 # tdk
 
+[![GitHub stars](https://img.shields.io/github/stars/aovestdipaperino/tdk?logo=github&color=brightgreen)](https://github.com/aovestdipaperino/tdk/stargazers)
+
 A Turbo Vision debug console for live token streams.
 
 Point it at a port, stream bytes at it, and watch them render the way a terminal
